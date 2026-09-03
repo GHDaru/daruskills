@@ -1,0 +1,98 @@
+/* ── PROJETO_ECS — shared shell (styles.css) ──
+   Unificado: max-width 880px · padding 48px 56px · h1 34px/700 · h2 22px/650 · strong 650
+   Theme key: ecs-theme · SVG icons 16px stroke=currentColor */
+
+/* ── Tokens ── */
+:root{
+  --font-sans:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+  --font-mono:'JetBrains Mono',ui-monospace,monospace;
+  --bg:#fbfbfc; --surface:#ffffff; --surface-2:#f4f4f7; --ink:#15151b; --muted:#62626d; --faint:#9a9aa4;
+  --border:#ececf2; --border-strong:#dadae4;
+  --accent:#5b5bd6; --accent-soft:#eeeeff;
+  --green:#1a7a4c; --amber:#b06b00; --red:#c0392b; --blue:#2b6cb0;
+  --sidebar-w:264px;
+  --shadow:0 1px 2px rgba(20,20,30,.04),0 4px 16px rgba(20,20,30,.04);
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0a0a0e; --surface:#121217; --surface-2:#1a1a22; --ink:#ededf2; --muted:#9a9aa6; --faint:#62626d;
+  --border:#22222c; --border-strong:#33333f;
+  --accent:#8b87ff; --accent-soft:#1c1c30;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+}}
+[data-theme="dark"]{
+  --bg:#0a0a0e; --surface:#121217; --surface-2:#1a1a22; --ink:#ededf2; --muted:#9a9aa6; --faint:#62626d;
+  --border:#22222c; --border-strong:#33333f;
+  --accent:#8b87ff; --accent-soft:#1c1c30;
+  --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-sans);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;font-feature-settings:"cv11","ss01"}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--font-mono);font-size:.86em;background:var(--surface-2);padding:2px 6px;border-radius:5px;border:1px solid var(--border)}
+strong{font-weight:650}
+
+/* ── Layout ── */
+.app{display:flex;min-height:100vh}
+.sidebar{width:var(--sidebar-w);flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);position:sticky;top:0;height:100vh;overflow-y:auto;padding:24px 0}
+.main{flex:1;min-width:0;padding:48px 56px 120px;max-width:880px}
+.main>*+*{margin-top:18px}
+
+/* ── Sidebar ── */
+.brand{padding:0 22px 22px;border-bottom:1px solid var(--border);margin-bottom:18px}
+.brand .logo{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.brand .mark{width:26px;height:26px;border-radius:7px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:14px}
+.brand .name{font-weight:800;font-size:16px;letter-spacing:-.01em}
+.brand .sub{font-size:12px;color:var(--faint);font-weight:500}
+.nav-group{padding:0 14px;margin-bottom:14px}
+.nav-group .label{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);padding:0 8px;margin-bottom:6px}
+.nav-item{display:flex;align-items:center;gap:9px;padding:7px 10px;border-radius:8px;color:var(--muted);font-size:13.5px;font-weight:500;cursor:pointer;border:none;background:none;width:100%;text-align:left;font-family:inherit;text-decoration:none;transition:background .15s,color .15s}
+.nav-item:hover{background:var(--surface-2);color:var(--ink);text-decoration:none}
+.nav-item.active{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.nav-item .ic{width:18px;display:flex;align-items:center;justify-content:center;opacity:.85;flex-shrink:0}
+.nav-item .ic svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+.nav-item .badge{margin-left:auto;font-size:10px;font-weight:600;color:var(--faint);background:var(--surface-2);padding:2px 7px;border-radius:999px}
+.nav-item.active .badge{background:transparent;color:var(--accent)}
+
+/* ── Typography ── */
+.eyebrow{font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
+h1{font-size:34px;font-weight:700;letter-spacing:-.025em;margin:0 0 12px;line-height:1.15}
+h2{font-size:22px;font-weight:650;letter-spacing:-.015em;margin:38px 0 12px;line-height:1.25}
+h3{font-size:16px;font-weight:700;margin:26px 0 8px}
+p{margin:0 0 14px}
+.lede{font-size:17px;color:var(--muted);margin-bottom:28px;max-width:65ch}
+ul,ol{margin:0 0 16px;padding-left:22px}
+li{margin-bottom:5px}
+
+/* ── Cards ── */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:22px 24px;box-shadow:var(--shadow);transition:border-color .15s,box-shadow .15s}
+.card .card-title{font-weight:700;font-size:15px;margin:0 0 4px;display:flex;align-items:center;gap:8px}
+.card .card-sub{font-size:13px;color:var(--muted);margin:0 0 14px}
+.grid{display:grid;gap:14px}
+.grid-2{grid-template-columns:1fr 1fr}
+@media(max-width:720px){.grid-2{grid-template-columns:1fr}.main{padding:32px 22px 80px}.sidebar{display:none}}
+
+/* ── Status pills ── */
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;letter-spacing:.02em}
+.pill.ok{background:rgba(26,122,76,.12);color:var(--green)}
+.pill.wip{background:rgba(176,107,0,.12);color:var(--amber)}
+.pill.muted{background:var(--surface-2);color:var(--faint)}
+
+/* ── Misc ── */
+.muted{color:var(--muted)}
+.faint{color:var(--faint)}
+.mono{font-family:var(--font-mono)}
+.divider{height:1px;background:var(--border);margin:28px 0}
+.callout{border-left:3px solid var(--accent);background:var(--accent-soft);padding:14px 18px;border-radius:0 8px 8px 0;font-size:14px;color:var(--muted);margin:0 0 18px}
+.callout b{color:var(--ink)}
+.kv{display:grid;grid-template-columns:130px 1fr;gap:6px 14px;font-size:13.5px}
+.kv dt{color:var(--faint);font-weight:600}
+.kv dd{margin:0}
+
+/* ── Theme toggle ── */
+.theme-toggle{position:fixed;top:14px;right:18px;z-index:50;width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--surface);cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--muted)}
+.theme-toggle:hover{color:var(--ink)}
+.theme-toggle svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+
+[hidden]{display:none!important}

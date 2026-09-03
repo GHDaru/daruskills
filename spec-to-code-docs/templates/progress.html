@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="pt-BR" data-theme="light" data-theme-key="ecs-theme">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>{{PROJECT_NAME}} — Progresso</title>
+<style>
+  /* ── Tokens (espelha styles.css · theme key: ecs-theme) ── */
+  :root{
+    --font-sans:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    --font-mono:'JetBrains Mono',ui-monospace,monospace;
+    --bg:#fbfbfc; --surface:#ffffff; --surface-2:#f4f4f7; --ink:#15151b; --muted:#62626d; --faint:#9a9aa4;
+    --border:#ececf2; --border-strong:#dadae4;
+    --accent:#5b5bd6; --accent-soft:#eeeeff;
+    --green:#1a7a4c; --amber:#b06b00; --red:#c0392b; --blue:#2b6cb0;
+    --shadow:0 1px 2px rgba(20,20,30,.04),0 4px 16px rgba(20,20,30,.04);
+  }
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+    --bg:#0a0a0e; --surface:#121217; --surface-2:#1a1a22; --ink:#ededf2; --muted:#9a9aa6; --faint:#62626d;
+    --border:#22222c; --border-strong:#33333f;
+    --accent:#8b87ff; --accent-soft:#1c1c30;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+  }}
+  [data-theme="dark"]{
+    --bg:#0a0a0e; --surface:#121217; --surface-2:#1a1a22; --ink:#ededf2; --muted:#9a9aa6; --faint:#62626d;
+    --border:#22222c; --border-strong:#33333f;
+    --accent:#8b87ff; --accent-soft:#1c1c30;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.25);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--font-sans);font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased;font-feature-settings:"cv11","ss01"}
+  code{font-family:var(--font-mono);font-size:.86em;background:var(--surface-2);padding:2px 6px;border-radius:5px;border:1px solid var(--border)}
+  strong,b{font-weight:650}
+
+  /* ── Layout ── */
+  .wrap{max-width:880px;margin:0 auto;padding:48px 24px 120px}
+
+  /* ── Header ── */
+  header{margin-bottom:40px}
+  .eyebrow{font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
+  h1{font-size:30px;font-weight:800;letter-spacing:-.02em;margin:0 0 10px;line-height:1.15}
+  .lede{color:var(--muted);font-size:16px;margin:0;max-width:62ch}
+  .bars{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
+  .bar{font-size:12px;padding:5px 11px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--muted)}
+  .bar b{color:var(--ink)}
+
+  /* ── Section headings ── */
+  h2{font-size:13px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:40px 0 14px}
+
+  /* ── Counter ── */
+  .pct{font-size:13px;color:var(--muted);margin:-6px 0 18px}
+  .pct b{color:var(--ink)}
+
+  /* ── Pieces ── */
+  .piece{display:flex;align-items:flex-start;gap:14px;padding:16px 18px;border:1px solid var(--border);border-radius:12px;background:var(--surface);margin-bottom:10px;box-shadow:var(--shadow);transition:border-color .15s}
+  .piece:hover{border-color:var(--border-strong)}
+  .piece .dot{width:10px;height:10px;border-radius:50%;margin-top:7px;flex-shrink:0;background:var(--muted)}
+  .piece[data-status="in-progress"] .dot{background:var(--amber);box-shadow:0 0 0 4px rgba(176,107,0,.15)}
+  .piece[data-status="won"] .dot{background:var(--green);box-shadow:0 0 0 4px rgba(26,122,76,.15)}
+  .piece[data-status="lost"] .dot{background:var(--red);box-shadow:0 0 0 4px rgba(192,57,43,.15)}
+  .piece .body{flex:1;min-width:0}
+  .piece .title{font-weight:700;font-size:15px;margin:0 0 3px}
+  .piece .desc{color:var(--muted);font-size:13px;margin:0}
+  .piece .meta{font-size:11px;color:var(--faint);margin-top:6px;letter-spacing:.02em}
+  .piece .status{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-top:4px}
+  .piece[data-status="in-progress"] .status{color:var(--amber)}
+  .piece[data-status="won"] .status{color:var(--green)}
+  .piece[data-status="lost"] .status{color:var(--red)}
+
+  /* ── Log ── */
+  .log{margin-top:36px;border-top:1px solid var(--border);padding-top:20px}
+  .log h2{margin-top:0}
+  .log ul{list-style:none;padding:0;margin:0}
+  .log li{font-size:13px;color:var(--muted);padding:5px 0;border-bottom:1px dashed var(--border)}
+  .log li time{color:var(--ink);font-weight:600;margin-right:10px;font-variant-numeric:tabular-nums}
+
+  /* ── Footer ── */
+  footer{margin-top:64px;font-size:12px;color:var(--faint)}
+
+  /* ── Theme toggle ── */
+  .theme-toggle{position:fixed;top:14px;right:18px;z-index:50;width:34px;height:34px;border-radius:8px;border:1px solid var(--border);background:var(--surface);cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--muted);transition:color .15s}
+  .theme-toggle:hover{color:var(--ink)}
+  .theme-toggle svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}
+
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+
+<!-- Theme toggle -->
+<button class="theme-toggle" onclick="toggleTheme()" aria-label="Alternar tema">
+  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+</button>
+
+<div class="wrap">
+  <header id="header">
+    <p class="eyebrow" id="eyebrow">Gauntlet loop · ao vivo</p>
+    <h1 id="title">{{PROJECT_NAME}}</h1>
+    <p class="lede" id="lede">{{PROJECT_DESCRIPTION}}</p>
+    <div class="bars" id="bars"></div>
+  </header>
+
+  <p class="pct" id="counter"></p>
+
+  <h2>Peças em julgamento</h2>
+  <div id="pieces"></div>
+
+  <div class="log">
+    <h2>Registro</h2>
+    <ul id="log"></ul>
+  </div>
+
+  <footer id="footer">Progresso atualizado a cada tick do /loop.</footer>
+</div>
+
+<script>
+/* ── Theme persistence ── */
+(function(){
+  var saved = localStorage.getItem('ecs-theme');
+  if (saved) document.documentElement.setAttribute('data-theme', saved);
+})();
+function toggleTheme(){
+  var cur = document.documentElement.getAttribute('data-theme');
+  var next = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('ecs-theme', next);
+}
+
+/* ── renderProgress(data) — preenche a página a partir de um JSON de progresso.
+   Estrutura esperada:
+   {
+     project:    { name, description, eyebrow },
+     bars:       [ { label, detail } ],
+     pieces:     [ { id, title, desc, status, statusLabel, meta } ],
+     log:        [ { time, text } ],
+     footer:     string
+   }
+   status ∈ "pending" | "in-progress" | "won" | "lost"
+────────────────────────────────────────── */
+function renderProgress(data){
+  // Header
+  if (data.project){
+    if (data.project.eyebrow)   document.getElementById('eyebrow').textContent = data.project.eyebrow;
+    if (data.project.name)      document.getElementById('title').textContent   = data.project.name;
+    if (data.project.description) document.getElementById('lede').textContent = data.project.description;
+  }
+
+  // Reference bars
+  var barsEl = document.getElementById('bars');
+  barsEl.innerHTML = '';
+  (data.bars || []).forEach(function(b){
+    var span = document.createElement('span');
+    span.className = 'bar';
+    span.innerHTML = '<b>' + esc(b.label) + '</b> · ' + esc(b.detail);
+    barsEl.appendChild(span);
+  });
+
+  // Pieces
+  var piecesEl = document.getElementById('pieces');
+  piecesEl.innerHTML = '';
+  var won = 0, total = 0;
+  (data.pieces || []).forEach(function(p){
+    total++;
+    if (p.status === 'won') won++;
+    var div = document.createElement('div');
+    div.className = 'piece';
+    div.setAttribute('data-status', p.status || 'pending');
+    if (p.id) div.id = p.id;
+    var html = '<div class="dot"></div><div class="body">';
+    html += '<p class="title">' + esc(p.title || '') + '</p>';
+    if (p.desc)  html += '<p class="desc">' + esc(p.desc) + '</p>';
+    if (p.meta)  html += '<p class="meta">' + esc(p.meta) + '</p>';
+    if (p.statusLabel) html += '<p class="status">' + esc(p.statusLabel) + '</p>';
+    else if (p.status === 'won')         html += '<p class="status">✓ Venceu o crítico cego</p>';
+    else if (p.status === 'in-progress') html += '<p class="status">Em julgamento</p>';
+    else if (p.status === 'lost')        html += '<p class="status">✗ Perdeu</p>';
+    else                                 html += '<p class="status">Aguardando</p>';
+    html += '</div>';
+    div.innerHTML = html;
+    piecesEl.appendChild(div);
+  });
+
+  // Counter
+  var counterEl = document.getElementById('counter');
+  if (total > 0){
+    var allWon = won === total;
+    counterEl.innerHTML = '<b>' + won + '</b> de ' + total + ' peças venceram o crítico cego'
+      + (allWon ? ' · <b>gauntlet completo!</b>' : '');
+  }
+
+  // Log
+  var logEl = document.getElementById('log');
+  logEl.innerHTML = '';
+  (data.log || []).forEach(function(entry){
+    var li = document.createElement('li');
+    li.innerHTML = '<time>' + esc(entry.time || '') + '</time> ' + (entry.html || esc(entry.text || ''));
+    logEl.appendChild(li);
+  });
+
+  // Footer
+  if (data.footer) document.getElementById('footer').textContent = data.footer;
+}
+
+function esc(s){
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ── Default embedded data (placeholder — substituir ao gerar) ── */
+var PROGRESS_DATA = {
+  project: {
+    name: "{{PROJECT_NAME}}",
+    description: "{{PROJECT_DESCRIPTION}}",
+    eyebrow: "Gauntlet loop · ao vivo"
+  },
+  bars: [
+    { label: "Nomenclatura", detail: "Atlassian Agile + Product" },
+    { label: "Workflow",    detail: "GitLab Product Handbook" },
+    { label: "Clareza/Design", detail: "Linear Method (régua)" }
+  ],
+  pieces: [
+    { id: "p-1", title: "Peça 1", desc: "Descrição da peça 1.", status: "pending" },
+    { id: "p-2", title: "Peça 2", desc: "Descrição da peça 2.", status: "in-progress" },
+    { id: "p-3", title: "Peça 3", desc: "Descrição da peça 3.", status: "won" }
+  ],
+  log: [
+    { time: "tick 1", text: "Loop iniciado." }
+  ],
+  footer: "Progresso atualizado a cada tick do /loop."
+};
+
+/* Render on load */
+renderProgress(PROGRESS_DATA);
+</script>
+</body>
+</html>
