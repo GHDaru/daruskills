@@ -525,6 +525,105 @@ _MODULES_CSS = """
 """
 
 
+def _semantic_ac(rule_name: str, rule_type: str) -> str:
+    """Convert a function name to a semantic acceptance criterion.
+    create_task → 'Tarefa criada com campos obrigatórios'
+    complete_task → 'Tarefa completada registra timestamp'
+    """
+    name = rule_name.lower()
+    # Verb → noun mapping
+    verb_map = {
+        "create": "criado com campos obrigatórios",
+        "complete": "completado registra timestamp",
+        "assign": "atribuído valida can_reassign antes",
+        "validate": "validado antes de prosseguir",
+        "update": "atualizado com validação",
+        "delete": "excluído sem deixar órfãos",
+        "list": "listados com filtros opcionais",
+        "get": "consultado por ID",
+        "prioritize": "repriorizado com validação",
+        "can": "verificada antes de executar",
+    }
+    # Extract object from function name
+    obj = ""
+    for verb in sorted(verb_map.keys(), key=len, reverse=True):
+        if name.startswith(verb):
+            remainder = name[len(verb):].lstrip("_")
+            if remainder:
+                obj = remainder.replace("_", " ")
+            else:
+                obj = rule_type.lower()
+            return f"{obj.capitalize()} {verb_map[verb]}"
+    return f"{rule_name} — regra de {rule_type.lower()}"
+
+
+def _endpoint_to_capability(method: str, path: str) -> str:
+    """Convert an endpoint to a capability description in PT.
+    POST /tasks → 'Criar tarefa'
+    GET /tasks/{id}/complete → 'Completar tarefa'
+    """
+    # Resource translations EN → PT
+    resource_pt = {
+        "task": "tarefa", "tasks": "tarefas",
+        "user": "usuário", "users": "usuários",
+        "project": "projeto", "projects": "projetos",
+        "order": "pedido", "orders": "pedidos",
+        "product": "produto", "products": "produtos",
+        "partner": "parceiro", "partners": "parceiros",
+        "item": "item", "items": "itens",
+        "health": "saúde",
+    }
+
+    method = method.upper()
+    # Extract resource from path
+    parts = [p for p in path.strip("/").split("/") if not p.startswith("{")]
+    resource = parts[0] if parts else "recurso"
+
+    # Translate to PT
+    resource = resource_pt.get(resource, resource)
+    # Singular/plural in PT
+    singular = resource.rstrip("s") if resource.endswith("s") else resource
+    plural = resource
+
+    # Method → verb
+    method_verbs = {
+        "GET": "Listar" if path.endswith(resource) and not any(p.startswith("{") for p in path.strip("/").split("/")) else "Consultar",
+        "POST": "Criar",
+        "PUT": "Atualizar",
+        "PATCH": "Atualizar",
+        "DELETE": "Excluir",
+    }
+
+    # Check for action endpoints (e.g., /tasks/{id}/complete)
+    action_parts = [p for p in path.strip("/").split("/") if not p.startswith("{") and p != resource]
+    if action_parts and method == "POST":
+        action = action_parts[-1]
+        action_map = {
+            "assign": "Atribuir", "complete": "Completar", "prioritize": "Priorizar",
+            "cancel": "Cancelar", "approve": "Aprovar", "reject": "Rejeitar",
+        }
+        verb = action_map.get(action, action.capitalize())
+        return f"{verb} {singular}"
+
+    verb = method_verbs.get(method, method)
+    obj = plural if verb in ("Listar",) else singular
+    return f"{verb} {obj}"
+
+
+def _concept_to_title(concept: str) -> str:
+    """Convert a domain concept to a module title.
+    Task → 'Gestão de Tarefas', User → 'Gestão de Usuários'
+    """
+    title_pt = {
+        "Task": "Gestão de Tarefas",
+        "User": "Gestão de Usuários",
+        "Project": "Gestão de Projetos",
+        "System": "Sistema",
+        "Shared": "Compartilhado",
+    }
+    return title_pt.get(concept, f"{concept} Management")
+
+
 def _build_as_is_epics(as_is: dict) -> list[dict]:
     """Build epic cards from reverse-engineered as_is data (code-only projects)."""
     entities = as_is.get("entities", [])
@@ -575,17 +674,18 @@ def _build_as_is_epics(as_is: dict) -> list[dict]:
     for i, (concept, data) in enumerate(sorted(domain_concepts.items())):
         if not data["entities"] and not data["endpoints"] and not data["rules"]:
             continue
-        # Build features from endpoints
+        # Build features from endpoints as capabilities
         features = []
         for ep in data["endpoints"]:
-            features.append({"n": f'{ep.get("method","")} {ep.get("path","")}', "d": ep.get("confidence", "confirmed"), "ep": 0, "t": 0})
+            cap = _endpoint_to_capability(ep.get("method", ""), ep.get("path", ""))
+            features.append({"n": cap, "d": ep.get("confidence", "confirmed"), "ep": 0, "t": 0})
         # Add rules as features
         for rule in data["rules"]:
             features.append({"n": rule.get("name", ""), "d": rule.get("type", ""), "ep": 0, "t": 0})
 
         epics.append({
             "id": concept,
-            "name": f"{concept} (AS-IS)",
+            "name": _concept_to_title(concept),
             "status": "Reverse-engineered",
             "rf": len(data["rules"]),
             "rfs": [],
@@ -772,15 +872,17 @@ def _render_modules(data: dict, project: dict) -> str:
         # Acceptance criteria — if empty, derive from RFs or AS-IS rules
         ac_items = m.get("ac", [])
         if not ac_items and is_as_is:
-            # Derive ACs from business rules in as_is
+            # Derive ACs from business rules using semantic conversion
             as_is_data = m.get("_as_is", {})
             for rule in as_is_data.get("rules", [])[:6]:
                 rname = rule.get("name", "")
-                rtype = rule.get("type", "").lower()
-                ac_items.append(f"✓ {rname} — regra de {rtype}")
-            # Also add endpoint ACs
+                rtype = rule.get("type", "")
+                ac_text = _semantic_ac(rname, rtype)
+                ac_items.append(f"✓ {ac_text}")
+            # Also add endpoint ACs as capabilities
             for ep in as_is_data.get("endpoints", [])[:3]:
-                ac_items.append(f"✓ {ep.get('method','')} {ep.get('path','')} — endpoint confirmado no código")
+                cap = _endpoint_to_capability(ep.get("method", ""), ep.get("path", ""))
+                ac_items.append(f"✓ {cap} — endpoint confirmado no código")
         elif not ac_items and not has_code:
             rfs = m.get("rfs", [])
             for rf_item in rfs[:5]:  # max 5 ACs
@@ -1808,19 +1910,23 @@ def _generate_default_gaps(as_is: dict) -> list[dict]:
 
     gap_modules = []
     for concept in concepts:
+        ctx = _concept_to_title(concept)
+        concept_rules = [r for r in rules if concept.lower() in r.get("name", "").lower()]
+        rule_names = ", ".join(r.get("name", "") for r in concept_rules[:3])
         items = []
         if "Flat" in style or "monolith" in style.lower():
-            items.append({"description": "Sem domain layer — código flat, sem separação domain/application/infrastructure", "confidence": "gap", "priority": "critical"})
-            items.append({"description": "Sem aggregate roots — entidades sem invariantes encapsuladas", "confidence": "gap", "priority": "high"})
-            items.append({"description": "Sem repositories — acesso direto ao DB, sem port/interface", "confidence": "gap", "priority": "medium"})
-        items.append({"description": "Sem testes — nenhum arquivo de teste encontrado", "confidence": "gap", "priority": "critical"})
-        items.append({"description": "Sem specs — documentação spec-driven ausente", "confidence": "gap", "priority": "high"})
+            items.append({"description": f"{ctx}: sem domain layer — código flat, sem separação domain/application/infrastructure", "confidence": "gap", "priority": "critical"})
+            items.append({"description": f"{ctx}: sem {concept} aggregate com invariante encapsulada", "confidence": "gap", "priority": "high"})
+            items.append({"description": f"{ctx}: sem repository — acesso direto ao DB, sem port/interface", "confidence": "gap", "priority": "medium"})
+        if rule_names:
+            items.append({"description": f"{ctx}: sem testes para {rule_names}", "confidence": "gap", "priority": "critical"})
+        else:
+            items.append({"description": f"{ctx}: sem testes — nenhum arquivo de teste encontrado", "confidence": "gap", "priority": "critical"})
+        items.append({"description": f"{ctx}: sem spec — documentação spec-driven ausente", "confidence": "gap", "priority": "high"})
         # Add confirmed items for what exists
         items.append({"description": f"Entidade {concept} extraída do código", "confidence": "confirmed", "priority": "P1"})
-        if rules:
-            concept_rules = [r for r in rules if concept.lower() in r.get("name", "").lower()]
-            if concept_rules:
-                items.append({"description": f"{len(concept_rules)} regras de negócio inferidas de nomes de funções", "confidence": "inferred", "priority": "P2"})
+        if concept_rules:
+            items.append({"description": f"{len(concept_rules)} regras de negócio inferidas: {rule_names}", "confidence": "inferred", "priority": "P2"})
         gap_modules.append({"id": concept, "name": f"{concept} (AS-IS)", "items": items})
 
     return gap_modules
