@@ -68,6 +68,17 @@ def _is_aggregate_root(name: str) -> bool:
     return any(h in n for h in _AGGREGATE_ROOT_HINTS)
 
 
+# DTO suffixes — these are NOT domain entities, they are transport objects
+_DTO_SUFFIXES = ("create", "update", "request", "response", "dto", "schema",
+                 "input", "output", "command", "query", "form", "view")
+
+
+def _is_dto(name: str) -> bool:
+    """Heuristic: is this a DTO/command (not a domain entity)?"""
+    n = name.lower()
+    return any(n.endswith(suffix) or suffix in n for suffix in _DTO_SUFFIXES)
+
+
 def _is_value_object(name: str) -> bool:
     """Heuristic: is this entity likely a value object?"""
     n = name.lower().replace("_", "").replace("-", "")
@@ -81,14 +92,52 @@ def _is_infra(name: str) -> bool:
 
 
 def _classify_entity(name: str) -> str:
-    """Classify an entity as aggregate_root, value_object, domain_service, or infrastructure."""
+    """Classify an entity as aggregate_root, value_object, dto, domain_entity, or infrastructure."""
     if _is_infra(name):
         return "infrastructure"
+    if _is_dto(name):
+        return "dto"
     if _is_aggregate_root(name):
         return "aggregate_root"
     if _is_value_object(name):
         return "value_object"
     return "domain_entity"
+
+
+def _infer_invariants(root: str) -> list[str]:
+    """Infer meaningful business invariants for an aggregate root."""
+    n = root.lower()
+    invariants = [f"Operations on {root} only via aggregate root"]
+
+    if "task" in n:
+        invariants.append("Tasks in done status cannot be reassigned")
+        invariants.append("Only todo or doing tasks can be completed")
+        invariants.append("Task must have a title and an assignee to be started")
+    elif "user" in n or "account" in n:
+        invariants.append("User must have unique email/identifier")
+        invariants.append("Inactive users cannot perform operations")
+    elif "project" in n:
+        invariants.append("Project must have at least one owner")
+        invariants.append("Completed projects cannot have new tasks added")
+    elif "order" in n or "requisition" in n:
+        invariants.append("Order cannot be modified after submission for approval")
+        invariants.append("Cancelled orders cannot be reactivated")
+    elif "partner" in n or "customer" in n or "supplier" in n:
+        invariants.append("Partner with dependents cannot be deleted")
+        invariants.append("Partner type cannot be changed after transactions exist")
+    elif "invoice" in n or "billing" in n:
+        invariants.append("Invoice cannot be modified after issuance")
+        invariants.append("Paid invoices cannot be cancelled")
+    elif "auction" in n or "bid" in n:
+        invariants.append("Bids cannot be placed after auction closes")
+        invariants.append("Bidder cannot see other bids in blind auction")
+    elif "shipment" in n or "asn" in n:
+        invariants.append("Shipment cannot be modified after dispatch")
+        invariants.append("Received shipments cannot be cancelled")
+    else:
+        invariants.append(f"{root} has consistent state")
+
+    return invariants
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -195,10 +244,10 @@ def _identify_bounded_contexts(as_is: dict) -> list[dict]:
 
 def _build_context(cid: str, cname: str, entities: list, source: dict) -> dict:
     """Build a bounded context from entities."""
-    # Classify entities
     aggregate_roots = []
     value_objects = []
     domain_entities = []
+    dtos = []
     infrastructure = []
 
     for ent in entities:
@@ -212,6 +261,8 @@ def _build_context(cid: str, cname: str, entities: list, source: dict) -> dict:
         cls = _classify_entity(name)
         if cls == "aggregate_root":
             aggregate_roots.append(name)
+        elif cls == "dto":
+            dtos.append(name)
         elif cls == "value_object":
             value_objects.append(name)
         elif cls == "infrastructure":
@@ -219,10 +270,10 @@ def _build_context(cid: str, cname: str, entities: list, source: dict) -> dict:
         else:
             domain_entities.append(name)
 
-    # Suggest domain events from aggregate roots
+    # Suggest domain events from aggregate roots only (not DTOs)
     domain_events = []
     for root in aggregate_roots:
-        for event_hint in ("Created", "Updated", "Approved", "Rejected", "Completed"):
+        for event_hint in ("Created", "Updated", "Completed", "Approved", "Rejected", "Assigned"):
             domain_events.append(f"{root}{event_hint}")
 
     # Build hexagonal layers
@@ -231,7 +282,7 @@ def _build_context(cid: str, cname: str, entities: list, source: dict) -> dict:
             "aggregate_roots": aggregate_roots,
             "value_objects": value_objects,
             "domain_entities": domain_entities,
-            "domain_events": domain_events[:10],  # limit
+            "domain_events": domain_events[:10],
             "repository_interfaces": [f"{r}Repository" for r in aggregate_roots],
             "constraints": ["Zero framework imports (no SQLAlchemy, Pydantic, etc.)", "Pure domain logic only"],
         },
@@ -243,6 +294,7 @@ def _build_context(cid: str, cname: str, entities: list, source: dict) -> dict:
         "infrastructure": {
             "adapters": ["SQLAlchemyRepository", "PydanticSchema", "FastAPIRouter", "MCPToolWrapper"],
             "orm_models": [f"{r}Model" for r in aggregate_roots],
+            "dtos": dtos,
             "constraints": ["Implements domain ports", "Framework-specific code only here"],
         },
         "api": {
@@ -251,13 +303,13 @@ def _build_context(cid: str, cname: str, entities: list, source: dict) -> dict:
         },
     }
 
-    # Semantic objects — entities with business meaning
+    # Semantic objects — only real aggregate roots with meaningful invariants
     semantic_objects = []
     for root in aggregate_roots:
         semantic_objects.append({
             "name": root,
             "meaning": f"Core business concept: {root}",
-            "invariants": [f"{root} has consistent state", f"{root} operations via aggregate root only"],
+            "invariants": _infer_invariants(root),
         })
 
     return {
@@ -265,6 +317,7 @@ def _build_context(cid: str, cname: str, entities: list, source: dict) -> dict:
         "name": cname,
         "aggregate_roots": aggregate_roots,
         "value_objects": value_objects,
+        "dtos": dtos,
         "domain_events": domain_events[:10],
         "repository_ports": [f"{r}Repository" for r in aggregate_roots],
         "layers": layers,

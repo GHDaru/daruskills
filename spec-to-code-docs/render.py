@@ -179,7 +179,7 @@ def _sidebar(active_page: str, project: dict, data: dict | None = None) -> str:
 
     # Transformação group — only if to_be or gap_analysis data exists
     has_tobe = bool(data and data.get("to_be"))
-    has_gap = bool(data and data.get("gap_analysis"))
+    has_gap = bool(data and data.get("gap_analysis")) or bool(data and data.get("as_is", {}).get("entities"))
     has_migration = bool(data and data.get("migration_plan"))
     transform_html = ""
     if has_tobe or has_gap or has_migration:
@@ -769,9 +769,19 @@ def _render_modules(data: dict, project: dict) -> str:
             elif isinstance(f, str):
                 feats_html += f'<div class="feat"><span class="feat-name">{_e(f)}</span></div>'
 
-        # Acceptance criteria — if empty, derive from RFs preserving original Portuguese
+        # Acceptance criteria — if empty, derive from RFs or AS-IS rules
         ac_items = m.get("ac", [])
-        if not ac_items and not has_code:
+        if not ac_items and is_as_is:
+            # Derive ACs from business rules in as_is
+            as_is_data = m.get("_as_is", {})
+            for rule in as_is_data.get("rules", [])[:6]:
+                rname = rule.get("name", "")
+                rtype = rule.get("type", "").lower()
+                ac_items.append(f"✓ {rname} — regra de {rtype}")
+            # Also add endpoint ACs
+            for ep in as_is_data.get("endpoints", [])[:3]:
+                ac_items.append(f"✓ {ep.get('method','')} {ep.get('path','')} — endpoint confirmado no código")
+        elif not ac_items and not has_code:
             rfs = m.get("rfs", [])
             for rf_item in rfs[:5]:  # max 5 ACs
                 if isinstance(rf_item, dict):
@@ -831,7 +841,19 @@ def _render_modules(data: dict, project: dict) -> str:
 
         # Links — adapt to project state
         links_parts = []
-        if spec_dir:
+        if is_as_is:
+            # Link to actual code files from as_is.modules
+            as_is_data = m.get("_as_is", {})
+            for ent in as_is_data.get("entities", [])[:3]:
+                mod_path = ent.get("module", "")
+                if mod_path:
+                    links_parts.append(f'<a href="../../{mod_path}" target="_blank">📄 {ent.get("name","")}</a>')
+            # Link to all source files
+            for mod in data.get("as_is", {}).get("modules", [])[:4]:
+                mod_name = mod.get("name", "")
+                if mod_name:
+                    links_parts.append(f'<a href="../../{mod_name}" target="_blank">⚙️ {mod_name}</a>')
+        elif spec_dir:
             links_parts.append(f'<a href="../../specs/{spec_dir}/spec.md" target="_blank">📄 spec.md</a>')
             # Spec artifacts (plan, tasks, qa-report, retro, ux-design)
             for art in m.get("artifacts", []):
@@ -1770,9 +1792,49 @@ def _render_migration(data: dict, project: dict) -> str:
 # gap.html — Gap Analysis
 # ──────────────────────────────────────────────────────────────────────
 
+def _generate_default_gaps(as_is: dict) -> list[dict]:
+    """Generate default gap items based on AS-IS architecture (flat = many gaps)."""
+    arch = as_is.get("architecture", {})
+    style = arch.get("style", "")
+    entities = as_is.get("entities", [])
+    rules = as_is.get("rules", [])
+    modules = as_is.get("modules", [])
+
+    # Deduplicate entity base names for bounded contexts
+    concepts = sorted(set(
+        re.sub(r"(Create|Update|Request|Response|Schema|Base)$", "", e.get("name", ""))
+        for e in entities
+    ))
+
+    gap_modules = []
+    for concept in concepts:
+        items = []
+        if "Flat" in style or "monolith" in style.lower():
+            items.append({"description": "Sem domain layer — código flat, sem separação domain/application/infrastructure", "confidence": "gap", "priority": "critical"})
+            items.append({"description": "Sem aggregate roots — entidades sem invariantes encapsuladas", "confidence": "gap", "priority": "high"})
+            items.append({"description": "Sem repositories — acesso direto ao DB, sem port/interface", "confidence": "gap", "priority": "medium"})
+        items.append({"description": "Sem testes — nenhum arquivo de teste encontrado", "confidence": "gap", "priority": "critical"})
+        items.append({"description": "Sem specs — documentação spec-driven ausente", "confidence": "gap", "priority": "high"})
+        # Add confirmed items for what exists
+        items.append({"description": f"Entidade {concept} extraída do código", "confidence": "confirmed", "priority": "P1"})
+        if rules:
+            concept_rules = [r for r in rules if concept.lower() in r.get("name", "").lower()]
+            if concept_rules:
+                items.append({"description": f"{len(concept_rules)} regras de negócio inferidas de nomes de funções", "confidence": "inferred", "priority": "P2"})
+        gap_modules.append({"id": concept, "name": f"{concept} (AS-IS)", "items": items})
+
+    return gap_modules
+
+
 def _render_gap(data: dict, project: dict) -> str:
     gap = data.get("gap_analysis", {})
     modules = gap.get("modules", [])
+
+    # Fallback: if no gap modules but as_is has code, generate default gaps
+    if not modules:
+        as_is = data.get("as_is", {})
+        if as_is and (as_is.get("entities") or as_is.get("endpoints")):
+            modules = _generate_default_gaps(as_is)
 
     # Serialize for client-side
     gap_json = json.dumps(modules, ensure_ascii=False)
@@ -1910,8 +1972,8 @@ def render(data: dict, output_dir: str | Path) -> None:
             _render_migration(data, project), encoding="utf-8"
         )
 
-    # gap.html — only if gap_analysis data exists
-    if data.get("gap_analysis"):
+    # gap.html — if gap_analysis data exists OR as_is has code (auto-generate gaps)
+    if data.get("gap_analysis") or (data.get("as_is", {}).get("entities") or data.get("as_is", {}).get("endpoints")):
         (out / "gap.html").write_text(
             _render_gap(data, project), encoding="utf-8"
         )
