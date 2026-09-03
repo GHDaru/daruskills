@@ -48,6 +48,9 @@ _ICONS = {
     "journeys": '<svg viewBox="0 0 24 24"><circle cx="6" cy="19" r="2"/><circle cx="18" cy="5" r="2"/><path d="M8 19h6a4 4 0 0 0 4-4V7"/><path d="M6 17V9a4 4 0 0 1 4-4h4"/></svg>',
     "prototype": '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>',
     "artifacts": '<svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.96L12 12.01l8.73-5.05"/><path d="M12 22.08V12"/></svg>',
+    "tobe": '<svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>',
+    "migration": '<svg viewBox="0 0 24 24"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/><circle cx="5" cy="12" r="2"/></svg>',
+    "gap": '<svg viewBox="0 0 24 24"><path d="M9 9h6v6H9z" fill="none" stroke-dasharray="3 3"/><path d="M3 9v6"/><path d="M21 9v6"/><path d="M3 12h3"/><path d="M18 12h3"/></svg>',
 }
 
 _MOON_SVG = '<svg viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
@@ -173,6 +176,21 @@ def _sidebar(active_page: str, project: dict, data: dict | None = None) -> str:
     md = ni("modules", modules_label, "modules", href="modules.html", badge_html=mod_badge)
     tr = ni("traceability", "Rastreabilidade", "traceability", href="traceability.html")
 
+    # Transformação group — only if to_be or gap_analysis data exists
+    has_tobe = bool(data and data.get("to_be"))
+    has_gap = bool(data and data.get("gap_analysis"))
+    has_migration = bool(data and data.get("migration_plan"))
+    transform_html = ""
+    if has_tobe or has_gap or has_migration:
+        transform_items = []
+        if has_tobe:
+            transform_items.append(ni("tobe", "TO-BE", "tobe", href="tobe.html"))
+        if has_migration:
+            transform_items.append(ni("migration", "Migration", "migration", href="migration.html"))
+        if has_gap:
+            transform_items.append(ni("gap", "Gap Analysis", "gap", href="gap.html"))
+        transform_html = f"""<div class="nav-group"><div class="label">Transformação</div>{"".join(transform_items)}</div>"""
+
     return f"""\
 <aside class="sidebar">
   <div class="brand">
@@ -196,6 +214,7 @@ def _sidebar(active_page: str, project: dict, data: dict | None = None) -> str:
     {ad}
     {art_btn}
   </div>
+  {transform_html}
   <div class="nav-group">
     <div class="label">Métricas</div>
     {mt}
@@ -1407,6 +1426,244 @@ def _render_roadmap(data: dict, project: dict) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────
+# tobe.html — Target Architecture (TO-BE)
+# ──────────────────────────────────────────────────────────────────────
+
+_TRANSFORM_CSS = """
+/* Confidence badges */
+.conf{display:inline-block;font-size:9px;font-weight:700;padding:1px 6px;border-radius:4px;letter-spacing:.04em;vertical-align:middle}
+.conf.confirmed{background:rgba(26,122,76,.15);color:var(--green)}
+.conf.inferred{background:rgba(176,107,0,.15);color:var(--amber)}
+.conf.gap{background:rgba(220,38,38,.12);color:var(--red,#dc2626)}
+
+/* TO-BE layout */
+.bc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:14px;margin:18px 0}
+.bc-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;box-shadow:var(--shadow)}
+.bc-card h3{font-size:15px;font-weight:700;margin:0 0 8px;display:flex;align-items:center;gap:8px}
+.bc-card .bc-desc{font-size:13px;color:var(--muted);margin:0 0 12px;line-height:1.5}
+.bc-card .bc-layers{display:flex;flex-direction:column;gap:4px}
+.bc-layer{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:7px;background:var(--surface-2);border:1px solid var(--border);font-size:12.5px}
+.bc-layer .layer-name{font-weight:600;color:var(--ink);min-width:100px}
+.bc-layer .layer-desc{color:var(--muted);flex:1}
+.bc-aggregates{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.bc-agg{font-family:var(--font-mono);font-size:10.5px;background:var(--accent-soft);color:var(--accent);padding:2px 8px;border-radius:5px;border:1px solid var(--border)}
+
+/* Hexagonal diagram */
+.hex-diagram{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:14px 0;max-width:600px}
+.hex-layer{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;text-align:center;font-size:12px}
+.hex-layer.domain{border-left:3px solid var(--accent);background:var(--accent-soft)}
+.hex-layer.app{border-left:3px solid var(--blue,#2b6cb0)}
+.hex-layer.infra{border-left:3px solid var(--amber)}
+.hex-layer .hex-title{font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--faint);margin-bottom:4px}
+.hex-layer .hex-items{color:var(--muted);font-size:11.5px;line-height:1.5}
+
+/* TDD strategy */
+.tdd-cycle{display:flex;align-items:center;gap:12px;justify-content:center;margin:18px 0;flex-wrap:wrap}
+.tdd-step{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 18px;text-align:center;box-shadow:var(--shadow)}
+.tdd-step .tdd-num{font-size:22px;font-weight:800;color:var(--accent)}
+.tdd-step .tdd-label{font-size:12px;font-weight:600;color:var(--ink);margin-top:2px}
+.tdd-arrow{color:var(--faint);font-size:20px}
+
+/* Semantic objects */
+.sem-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin:14px 0}
+.sem-obj{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:12.5px}
+.sem-obj .sem-name{font-weight:600;color:var(--ink)}
+.sem-obj .sem-role{font-size:11px;color:var(--faint);margin-top:2px}
+"""
+
+def _render_tobe(data: dict, project: dict) -> str:
+    tobe = data.get("to_be", {})
+
+    # Bounded contexts
+    bcs = tobe.get("bounded_contexts", [])
+    bc_html = ""
+    for bc in bcs:
+        layers = bc.get("layers", [])
+        layers_html = ""
+        for layer in layers:
+            lname = layer.get("name", "") if isinstance(layer, dict) else str(layer)
+            ldesc = layer.get("desc", "") if isinstance(layer, dict) else ""
+            layers_html += f'<div class="bc-layer"><span class="layer-name">{_e(lname)}</span><span class="layer-desc">{_e(ldesc)}</span></div>'
+        aggs = bc.get("aggregates", [])
+        aggs_html = "".join(f'<span class="bc-agg">{_e(a)}</span>' for a in aggs)
+        conf = bc.get("confidence", "inferred")
+        bc_html += f"""<div class="bc-card">
+          <h3>{_e(bc.get("name",""))} <span class="conf {conf}">{conf.upper()}</span></h3>
+          <p class="bc-desc">{_e(bc.get("description",""))}</p>
+          {f'<div class="bc-aggregates">{aggs_html}</div>' if aggs else ''}
+          {f'<div class="bc-layers">{layers_html}</div>' if layers_html else ''}
+        </div>"""
+
+    # Hexagonal layers
+    hex_layers = tobe.get("hexagonal_layers", [])
+    hex_html = ""
+    if hex_layers:
+        hex_html = '<div class="hex-diagram">'
+        for hl in hex_layers:
+            cls = hl.get("type", "")
+            hex_html += f'<div class="hex-layer {cls}"><div class="hex-title">{_e(hl.get("title",""))}</div><div class="hex-items">{_e(hl.get("items",""))}</div></div>'
+        hex_html += '</div>'
+
+    # TDD strategy
+    tdd = tobe.get("tdd_strategy", {})
+    tdd_html = ""
+    if tdd:
+        steps = tdd.get("steps", ["Red", "Green", "Refactor"])
+        tdd_html = '<div class="tdd-cycle">'
+        for i in range(len(steps)):
+            tdd_html += f'<div class="tdd-step"><div class="tdd-num">{i+1}</div><div class="tdd-label">{_e(steps[i])}</div></div>'
+            if i < len(steps) - 1:
+                tdd_html += '<span class="tdd-arrow">→</span>'
+        tdd_html += '</div>'
+
+    # Semantic objects
+    sem_objs = tobe.get("semantic_objects", [])
+    sem_html = ""
+    if sem_objs:
+        sem_html = '<div class="sem-grid">'
+        for obj in sem_objs:
+            sem_html += f'<div class="sem-obj"><div class="sem-name">{_e(obj.get("name",""))}</div><div class="sem-role">{_e(obj.get("role",""))}</div></div>'
+        sem_html += '</div>'
+
+    # UX/UI
+    uxui = tobe.get("uxui", {})
+
+    body = f"""
+  <p class="eyebrow">Transformação</p>
+  <h1>Arquitetura-alvo (TO-BE)</h1>
+  <p class="lede">{_e(tobe.get("lede", "A arquitetura-alvo que o rewrite visa atingir — DDD + Hexagonal + TDD."))}</p>
+  {f'<div class="callout">{_e(tobe.get("callout", ""))}</div>' if tobe.get("callout") else ''}
+  {f'<h2>Bounded Contexts ({len(bcs)})</h2>' if bcs else ''}
+  {bc_html}
+  {f'<h2>Camadas Hexagonais</h2>' if hex_layers else ''}
+  {hex_html}
+  {f'<h2>Estratégia TDD</h2><p class="muted">{_e(tdd.get("description",""))}</p>' if tdd else ''}
+  {tdd_html}
+  {f'<h2>Objetos Semânticos</h2>' if sem_objs else ''}
+  {sem_html}
+  {f'<h2>UX/UI</h2><div class="card"><p class="muted">{_e(uxui.get("description",""))}</p></div>' if uxui else ''}
+"""
+    return _page(f'{project.get("name","")} — TO-BE', body, "tobe", project, extra_css=_TRANSFORM_CSS, data=data)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# migration.html — Migration Plan
+# ──────────────────────────────────────────────────────────────────────
+
+def _render_migration(data: dict, project: dict) -> str:
+    mig = data.get("migration_plan", {})
+
+    # Strategy
+    strategy = mig.get("strategy", {})
+    # Phases
+    phases = mig.get("phases", [])
+    phases_html = ""
+    for p in phases:
+        conf = p.get("confidence", "inferred")
+        phases_html += f"""<div class="card" style="margin-bottom:14px">
+          <p class="card-title">Fase {p.get("n","")} — {_e(p.get("title",""))} <span class="conf {conf}">{conf.upper()}</span></p>
+          <p class="muted" style="font-size:14px;margin:0 0 10px">{_e(p.get("description",""))}</p>
+          {f'<p class="faint" style="font-size:12px;margin:0">⏳ {_e(p.get("gate",""))}</p>' if p.get("gate") else ''}
+        </div>"""
+    # Risks
+    risks = mig.get("risks", [])
+    risks_html = ""
+    for r in risks:
+        severity = r.get("severity", "medium")
+        risks_html += f'<div class="card"><p class="card-title">{_e(r.get("title",""))} <span class="pill {"wip" if severity=="high" else "muted"}">{severity}</span></p><p class="muted" style="font-size:13px;margin:0">{_e(r.get("mitigation",""))}</p></div>'
+
+    body = f"""
+  <p class="eyebrow">Transformação</p>
+  <h1>Plano de Migração</h1>
+  <p class="lede">{_e(mig.get("lede", "Estratégia de migração do AS-IS para o TO-BE."))}</p>
+  {f'<div class="callout"><b>Estratégia:</b> {_e(strategy.get("name","") if isinstance(strategy, dict) else strategy)}</div>' if strategy else ''}
+  {f'<h2>Fases ({len(phases)})</h2>' if phases else ''}
+  {phases_html}
+  {f'<h2>Riscos ({len(risks)})</h2><div class="grid grid-2">{risks_html}</div>' if risks else ''}
+"""
+    return _page(f'{project.get("name","")} — Migration', body, "migration", project, extra_css=_TRANSFORM_CSS, data=data)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# gap.html — Gap Analysis
+# ──────────────────────────────────────────────────────────────────────
+
+def _render_gap(data: dict, project: dict) -> str:
+    gap = data.get("gap_analysis", {})
+    modules = gap.get("modules", [])
+
+    # Serialize for client-side
+    gap_json = json.dumps(modules, ensure_ascii=False)
+
+    body = ""  # rendered by JS
+
+    script = f"""<script>
+const GAP_MODULES = {gap_json};
+const el = document.getElementById("content");
+
+function confBadge(c) {{
+  const cls = c || "gap";
+  return `<span class="conf ${{cls}}">${{(c||"gap").toUpperCase()}}</span>`;
+}}
+
+function renderGap() {{
+  let totalItems = 0, confirmed = 0, inferred = 0, gaps = 0;
+  GAP_MODULES.forEach(m => {{
+    m.items.forEach(i => {{
+      totalItems++;
+      if(i.confidence === "confirmed") confirmed++;
+      else if(i.confidence === "inferred") inferred++;
+      else gaps++;
+    }});
+  }});
+  const tiles = `
+    <div class="grid grid-3" style="margin-bottom:24px">
+      <div class="stat-tile"><div class="num">${{totalItems}}</div><div class="lbl">Total de itens</div></div>
+      <div class="stat-tile"><div class="num" style="color:var(--green)">${{confirmed}}</div><div class="lbl">Confirmados</div></div>
+      <div class="stat-tile"><div class="num" style="color:var(--amber)">${{inferred}}</div><div class="lbl">Inferidos</div></div>
+    </div>
+    <div class="grid grid-3" style="margin-bottom:28px">
+      <div class="stat-tile"><div class="num" style="color:var(--red,#dc2626)">${{gaps}}</div><div class="lbl">Gaps</div></div>
+      <div class="stat-tile"><div class="num">${{Math.round(confirmed/totalItems*100||0)}}%</div><div class="lbl">Confiança</div></div>
+      <div class="stat-tile"><div class="num">${{GAP_MODULES.length}}</div><div class="lbl">Módulos</div></div>
+    </div>`;
+
+  const moduleHtml = GAP_MODULES.map(m => {{
+    const rows = m.items.map(i => `
+      <div class="req-row">
+        <span class="req-id">${{confBadge(i.confidence)}}</span>
+        <span class="req-desc">${{i.description||""}}</span>
+        <span class="req-src">${{i.priority||""}}</span>
+      </div>`).join("");
+    return `
+      <div class="module-section">
+        <div class="module-header">
+          <span class="m-id">${{m.id||""}}</span>
+          <span class="m-name">${{m.name||""}}</span>
+        </div>
+        <div class="req-table">
+          <div class="rt-head"><span>Confiança</span><span>O que falta (AS-IS → TO-BE)</span><span class="rt-src">Prioridade</span></div>
+          ${{rows}}
+        </div>
+      </div>`;
+  }}).join("");
+
+  el.innerHTML = `
+    <p class="eyebrow">Transformação</p>
+    <h1>Gap Analysis</h1>
+    <p class="lede">O que falta no AS-IS para chegar no TO-BE — por módulo, com prioridade e confidence.</p>
+    <div class="callout"><b>Confidence scale:</b> <span class="conf confirmed">CONFIRMED</span> extraído de fonte direta · <span class="conf inferred">INFERIDO</span> inferido do contexto · <span class="conf gap">GAP</span> não existe no AS-IS</div>
+    ${{tiles}}
+    ${{moduleHtml}}`;
+}}
+
+renderGap();
+</script>"""
+
+    return _page(f'{project.get("name","")} — Gap Analysis', body, "gap", project, extra_css=_TRANSFORM_CSS + _TRACE_CSS, script=script, data=data)
+
+
+# ──────────────────────────────────────────────────────────────────────
 # Main entry point
 # ──────────────────────────────────────────────────────────────────────
 
@@ -1458,6 +1715,24 @@ def render(data: dict, output_dir: str | Path) -> None:
     (out / "roadmap.html").write_text(
         _render_roadmap(data, project), encoding="utf-8"
     )
+
+    # tobe.html — only if to_be data exists
+    if data.get("to_be"):
+        (out / "tobe.html").write_text(
+            _render_tobe(data, project), encoding="utf-8"
+        )
+
+    # migration.html — only if migration_plan data exists
+    if data.get("migration_plan"):
+        (out / "migration.html").write_text(
+            _render_migration(data, project), encoding="utf-8"
+        )
+
+    # gap.html — only if gap_analysis data exists
+    if data.get("gap_analysis"):
+        (out / "gap.html").write_text(
+            _render_gap(data, project), encoding="utf-8"
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────
