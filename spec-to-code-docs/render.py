@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -524,16 +525,111 @@ _MODULES_CSS = """
 """
 
 
+def _build_as_is_epics(as_is: dict) -> list[dict]:
+    """Build epic cards from reverse-engineered as_is data (code-only projects)."""
+    entities = as_is.get("entities", [])
+    endpoints = as_is.get("endpoints", [])
+    rules = as_is.get("rules", [])
+    arch = as_is.get("architecture", {})
+
+    # Group entities by domain concept (strip schema suffixes like Create/Update/Request)
+    domain_concepts = {}
+    for ent in entities:
+        name = ent.get("name", "")
+        # Strip Pydantic schema suffixes to find the domain concept
+        base = re.sub(r"(Create|Update|Request|Response|Schema|Base)$", "", name)
+        if base not in domain_concepts:
+            domain_concepts[base] = {"entities": [], "endpoints": [], "rules": []}
+        domain_concepts[base]["entities"].append(ent)
+
+    # Attribute endpoints to domain concepts by path
+    for ep in endpoints:
+        path = ep.get("path", "").lower()
+        attributed = False
+        for concept in domain_concepts:
+            if concept.lower() in path:
+                domain_concepts[concept]["endpoints"].append(ep)
+                attributed = True
+                break
+        if not attributed:
+            if "health" not in path:
+                domain_concepts.setdefault("System", {"entities": [], "endpoints": [], "rules": []})
+                domain_concepts["System"]["endpoints"].append(ep)
+
+    # Attribute rules to domain concepts by name
+    for rule in rules:
+        rname = rule.get("name", "").lower()
+        attributed = False
+        for concept in domain_concepts:
+            if concept.lower() in rname:
+                domain_concepts[concept]["rules"].append(rule)
+                attributed = True
+                break
+        if not attributed:
+            domain_concepts.setdefault("Shared", {"entities": [], "endpoints": [], "rules": []})
+            domain_concepts["Shared"]["rules"].append(rule)
+
+    # Build epics
+    epics = []
+    color_palette = ["#5b5bd6", "#2b6cb0", "#38a169", "#dd6b20", "#e53e3e", "#805ad5"]
+    for i, (concept, data) in enumerate(sorted(domain_concepts.items())):
+        if not data["entities"] and not data["endpoints"] and not data["rules"]:
+            continue
+        # Build features from endpoints
+        features = []
+        for ep in data["endpoints"]:
+            features.append({"n": f'{ep.get("method","")} {ep.get("path","")}', "d": ep.get("confidence", "confirmed"), "ep": 0, "t": 0})
+        # Add rules as features
+        for rule in data["rules"]:
+            features.append({"n": rule.get("name", ""), "d": rule.get("type", ""), "ep": 0, "t": 0})
+
+        epics.append({
+            "id": concept,
+            "name": f"{concept} (AS-IS)",
+            "status": "Reverse-engineered",
+            "rf": len(data["rules"]),
+            "rfs": [],
+            "rnfs": [],
+            "features": features,
+            "ac": [],
+            "artifacts": [],
+            "specDir": "",
+            "specNum": concept,
+            "specPath": "",
+            "description": f"Reverse-engineered from code — {len(data['entities'])} entities, {len(data['endpoints'])} endpoints, {len(data['rules'])} rules",
+            "vision": f"Entidades: {', '.join(e['name'] for e in data['entities'])}" if data["entities"] else "",
+            "deps": "",
+            "color": color_palette[i % len(color_palette)],
+            "transversal": False,
+            "endpoints": len(data["endpoints"]),
+            "tools": 0,
+            "telas": 0,
+            "testes": 0,
+            "backend": "",
+            "frontend": "",
+            "_as_is": data,
+            "_confidence": arch.get("confidence", "inferred"),
+        })
+    return epics
+
+
 def _render_modules(data: dict, project: dict) -> str:
     modules = data.get("modules", [])
     specs = data.get("specs", [])
+    as_is = data.get("as_is", {})
 
     # If no code modules, use specs as epics (pre-implementation)
     use_specs = not modules and bool(specs)
     epics = modules if modules else specs
 
+    # Fallback: if no specs and no modules but as_is has code, build epics from code
+    is_as_is = False
+    if not epics and as_is and (as_is.get("entities") or as_is.get("endpoints")):
+        epics = _build_as_is_epics(as_is)
+        is_as_is = True
+
     # Summary strip — adapt labels to project state
-    has_code = bool(modules)
+    has_code = bool(modules) or is_as_is
     totals = {
         "count": len(epics),
         "rf": sum(m.get("rf", len(m.get("rfs", []))) for m in epics),
@@ -554,6 +650,14 @@ def _render_modules(data: dict, project: dict) -> str:
             ("Telas", totals["telas"]),
             ("Testes", totals["testes"]),
             ("Gauntlet", project.get("gauntlet", "7/7")),
+        ]
+    elif is_as_is:
+        summary_items += [
+            ("Endpoints", totals["endpoints"]),
+            ("Entidades", len(as_is.get("entities", []))),
+            ("Regras", len(as_is.get("rules", []))),
+            ("Arquitetura", as_is.get("architecture", {}).get("style", "")[:12]),
+            ("Estado", "AS-IS"),
         ]
     else:
         adrs_count = len(data.get("adrs", []))
@@ -603,8 +707,11 @@ def _render_modules(data: dict, project: dict) -> str:
         # Status — gauntlet for code modules, spec status for pre-implementation
         if transversal:
             status = '<span class="mod-status tv">transversal</span>'
-        elif has_code:
+        elif has_code and not is_as_is:
             status = '<span class="mod-status ok">✓ gauntlet</span>'
+        elif is_as_is:
+            conf = m.get("_confidence", "inferred")
+            status = f'<span class="mod-status tv">AS-IS · {conf}</span>'
         elif status_val:
             status_cls = "ok" if status_val.lower() in ("aprovada", "accepted", "done") else "tv"
             status = f'<span class="mod-status {status_cls}">{_e(status_val)}</span>'
@@ -776,11 +883,12 @@ def _render_modules(data: dict, project: dict) -> str:
   </div>"""
 
     page_title = f'{project.get("name","")} — {"Módulos (Épicos)" if has_code else "Specs (Épicos)"}'
-    lede_text = (
-        "Cada módulo é um <strong>Bounded Context</strong> (DDD) e um <strong>épico de produto</strong>, decomposto em features com critérios de aceitação e dependências explícitas."
-        if has_code
-        else "Cada spec é um <strong>épico de produto</strong>, decomposto em features com critérios de aceitação. Projeto em pré-implementação — sem código de produção ainda."
-    )
+    if is_as_is:
+        lede_text = "Reverse-engineered from code (AS-IS). Cada módulo foi extraído do código-fonte — entidades, endpoints e regras de negócio com confidence badges."
+    elif has_code:
+        lede_text = "Cada módulo é um <strong>Bounded Context</strong> (DDD) e um <strong>épico de produto</strong>, decomposto em features com critérios de aceitação e dependências explícitas."
+    else:
+        lede_text = "Cada spec é um <strong>épico de produto</strong>, decomposto em features com critérios de aceitação. Projeto em pré-implementação — sem código de produção ainda."
 
     body = f"""\
     <p class="eyebrow">Produto</p>
@@ -872,8 +980,82 @@ _TRACE_CSS = """
 """
 
 
+def _build_as_is_traceability(as_is: dict) -> list[dict]:
+    """Build traceability modules from as_is code data (code-only projects).
+    Groups endpoints → rules → entities by domain concept.
+    """
+    entities = as_is.get("entities", [])
+    endpoints = as_is.get("endpoints", [])
+    rules = as_is.get("rules", [])
+
+    # Group by domain concept
+    concepts = {}
+    for ent in entities:
+        name = ent.get("name", "")
+        base = re.sub(r"(Create|Update|Request|Response|Schema|Base)$", "", name)
+        if base not in concepts:
+            concepts[base] = {"entities": [], "endpoints": [], "rules": []}
+        concepts[base]["entities"].append(ent)
+
+    for ep in endpoints:
+        path = ep.get("path", "").lower()
+        for concept in concepts:
+            if concept.lower() in path:
+                concepts[concept]["endpoints"].append(ep)
+                break
+        else:
+            if "health" not in path:
+                concepts.setdefault("System", {"entities": [], "endpoints": [], "rules": []})
+                concepts["System"]["endpoints"].append(ep)
+
+    for rule in rules:
+        rname = rule.get("name", "").lower()
+        for concept in concepts:
+            if concept.lower() in rname:
+                concepts[concept]["rules"].append(rule)
+                break
+        else:
+            concepts.setdefault("Shared", {"entities": [], "endpoints": [], "rules": []})
+            concepts["Shared"]["rules"].append(rule)
+
+    # Build traceability modules
+    modules = []
+    for concept, cdata in sorted(concepts.items()):
+        if not cdata["entities"] and not cdata["endpoints"] and not cdata["rules"]:
+            continue
+        # Build RFs from rules
+        rfs = [{"id": r.get("name", ""), "d": r.get("description", r.get("type", "")), "s": "code", "confidence": r.get("confidence", "inferred")} for r in cdata["rules"]]
+        # Build sources from entities
+        sources = [{"tag": e.get("name", ""), "desc": f"Entity in {e.get('module','')}", "path": e.get("module", "")} for e in cdata["entities"]]
+        # Build fwdMap from endpoints
+        fwd_map = []
+        if cdata["endpoints"]:
+            fwd_map.append({"rf": [1, len(rfs) or 1], "tela": "", "ep": ", ".join(f'{ep["method"]} {ep["path"]}' for ep in cdata["endpoints"][:3]), "test": "", "ac": "code → endpoint"})
+
+        modules.append({
+            "id": concept,
+            "name": f"{concept} (AS-IS)",
+            "specNum": concept,
+            "specPath": "",
+            "modulePath": "",
+            "frontend": "",
+            "backend": "",
+            "rfs": rfs,
+            "rnfs": [],
+            "sources": sources,
+            "fwdMap": fwd_map,
+            "rnfFwdMap": [],
+        })
+    return modules
+
+
 def _render_traceability(data: dict, project: dict) -> str:
     tr_modules = data.get("traceability", {}).get("modules", [])
+
+    # Fallback: if no traceability modules but as_is has code, build from as_is
+    as_is = data.get("as_is", {})
+    if not tr_modules and as_is and (as_is.get("endpoints") or as_is.get("rules")):
+        tr_modules = _build_as_is_traceability(as_is)
 
     # Serialize data for client-side rendering (same pattern as reference)
     tr_json = json.dumps(tr_modules, ensure_ascii=False)

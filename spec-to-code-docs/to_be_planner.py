@@ -95,18 +95,55 @@ def _classify_entity(name: str) -> str:
 # Bounded Context identification
 # ──────────────────────────────────────────────────────────────────────
 
+def _get_nested(as_is: dict, key: str, default=None):
+    """Get a key from top-level or nested as_is dict."""
+    if key in as_is:
+        return as_is[key]
+    nested = as_is.get("as_is", {})
+    if isinstance(nested, dict) and key in nested:
+        return nested[key]
+    return default if default is not None else []
+
+
+def _infer_context_name(entity_name: str) -> str:
+    """Infer a bounded context name from an entity name."""
+    n = entity_name.replace("Create", "").replace("Update", "").replace("Request", "").replace("Response", "")
+    # Group by theme
+    n_lower = n.lower()
+    if "user" in n_lower or "account" in n_lower or "auth" in n_lower:
+        return "User Management"
+    if "task" in n_lower:
+        return "Task Management"
+    if "project" in n_lower:
+        return "Project Management"
+    if "partner" in n_lower or "supplier" in n_lower or "customer" in n_lower:
+        return "Partner Management"
+    if "order" in n_lower or "requisition" in n_lower or "purchase" in n_lower:
+        return "Order Management"
+    if "invoice" in n_lower or "billing" in n_lower:
+        return "Billing"
+    if "shipment" in n_lower or "logistics" in n_lower or "asn" in n_lower:
+        return "Logistics"
+    if "catalog" in n_lower or "product" in n_lower or "item" in n_lower:
+        return "Catalog"
+    if "stock" in n_lower or "inventory" in n_lower:
+        return "Inventory"
+    return f"{n} Context"
+
+
 def _identify_bounded_contexts(as_is: dict) -> list[dict]:
     """Identify bounded contexts from AS-IS modules/entities.
 
-    Heuristic: group entities by module/directory. Each module becomes
-    a bounded context. Entities within are classified as aggregate roots,
-    value objects, domain events, or domain services.
+    Heuristic: group entities by module/directory or by theme.
+    Never returns empty list when entities exist.
     """
     contexts = []
 
-    # Source 1: explicit modules from AS-IS
-    modules = as_is.get("modules", [])
-    for mod in modules:
+    # Source 1: explicit domain modules from AS-IS (top-level or nested)
+    modules = _get_nested(as_is, "modules")
+    # Filter: only treat as domain modules if they have entities or id
+    domain_modules = [m for m in modules if isinstance(m, dict) and (m.get("entities") or m.get("id", "").startswith("M"))]
+    for mod in domain_modules:
         mid = mod.get("id", mod.get("name", ""))
         mname = mod.get("name", mid)
         entities = mod.get("entities", mod.get("tables", []))
@@ -114,23 +151,44 @@ def _identify_bounded_contexts(as_is: dict) -> list[dict]:
         contexts.append(context)
 
     # Source 2: specs as bounded contexts (pre-implementation)
-    if not contexts:
-        specs = as_is.get("specs", [])
+    specs = _get_nested(as_is, "specs")
+    if not contexts and specs:
         for spec in specs:
             sid = spec.get("id", spec.get("spec", ""))
             sname = spec.get("name", sid)
             rfs = spec.get("rfs", [])
-            # Extract entity-like names from RFs
             entities = _extract_entities_from_rfs(rfs)
             context = _build_context(sid, sname, entities, spec)
             contexts.append(context)
 
-    # Source 3: entities directly from AS-IS
+    # Source 3: infer from entities (group by theme)
     if not contexts:
-        entities = as_is.get("entities", as_is.get("tables", []))
+        entities = _get_nested(as_is, "entities")
+        if not entities:
+            entities = _get_nested(as_is, "tables")
         if entities:
-            context = _build_context("default", "Default Context", entities, {})
-            contexts.append(context)
+            # Extract entity names
+            ent_names = []
+            for ent in entities:
+                if isinstance(ent, str):
+                    ent_names.append(ent)
+                elif isinstance(ent, dict):
+                    ent_names.append(ent.get("name", ent.get("id", str(ent))))
+
+            # Group by inferred context name
+            groups = {}
+            for ename in ent_names:
+                ctx_name = _infer_context_name(ename)
+                if ctx_name not in groups:
+                    groups[ctx_name] = []
+                groups[ctx_name].append(ename)
+
+            # Create a bounded context per group
+            for ctx_name, ctx_entities in groups.items():
+                cid = ctx_name.lower().replace(" ", "_")
+                context = _build_context(cid, ctx_name, ctx_entities, {})
+                context["confidence"] = "INFERRED"
+                contexts.append(context)
 
     return contexts
 
@@ -275,11 +333,11 @@ def _build_uxui_strategy(as_is: dict) -> dict:
     """Build UXUI strategy from AS-IS data."""
     # Extract telas/screens from AS-IS
     telas = []
-    for mod in as_is.get("modules", []):
+    for mod in _get_nested(as_is, "modules"):
         for tela in mod.get("telas", mod.get("screens", [])):
             telas.append(tela if isinstance(tela, str) else tela.get("name", str(tela)))
 
-    journeys = as_is.get("journeys", [])
+    journeys = _get_nested(as_is, "journeys")
 
     return {
         "design_system": {
@@ -305,12 +363,19 @@ def _build_uxui_strategy(as_is: dict) -> dict:
 def _build_migration_plan(contexts: list[dict], as_is: dict) -> dict:
     """Build migration plan using Strangler Fig strategy."""
     # Determine strategy
-    has_code = bool(as_is.get("modules"))
-    if has_code:
+    modules = _get_nested(as_is, "modules")
+    endpoints = _get_nested(as_is, "endpoints")
+    specs = _get_nested(as_is, "specs")
+    has_code = bool(modules or endpoints)
+    has_specs = bool(specs)
+    if has_code and has_specs:
         strategy = "Strangler Fig"
-        rationale = "Sistema existente — migrar incrementalmente, substituindo fluxos um a um"
+        rationale = "Sistema existente com specs — migrar incrementalmente, substituindo fluxos um a um"
+    elif has_code and not has_specs:
+        strategy = "Incremental refactor from flat to DDD"
+        rationale = "Código existente sem specs — refatorar de flat/monolítico para DDD+Hexagonal incrementalmente"
     else:
-        strategy = "Greenfield com spec-driven"
+        strategy = "Greenfield spec-driven"
         rationale = "Sem código de produção — construir do zero com TDD, spec como fonte de verdade"
 
     # Build phases
@@ -363,7 +428,7 @@ def _build_gap_analysis(contexts: list[dict], as_is: dict) -> dict:
     """Build gap analysis: what's missing AS-IS → TO-BE."""
     gaps = []
 
-    has_code = bool(as_is.get("modules"))
+    has_code = bool(_get_nested(as_is, "modules") or _get_nested(as_is, "endpoints"))
 
     for ctx in contexts:
         ctx_gaps = []
@@ -379,7 +444,7 @@ def _build_gap_analysis(contexts: list[dict], as_is: dict) -> dict:
 
         # Check if tests exist
         testes = 0
-        for mod in as_is.get("modules", []):
+        for mod in _get_nested(as_is, "modules"):
             testes += mod.get("testes", 0)
         if testes == 0:
             ctx_gaps.append({
@@ -390,7 +455,7 @@ def _build_gap_analysis(contexts: list[dict], as_is: dict) -> dict:
             })
 
         # Check if MCP tools exist
-        tools = sum(mod.get("tools", 0) for mod in as_is.get("modules", []))
+        tools = sum(mod.get("tools", 0) for mod in _get_nested(as_is, "modules"))
         if tools == 0:
             ctx_gaps.append({
                 "gap": "Sem MCP tools",
